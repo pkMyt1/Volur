@@ -15,13 +15,10 @@ import time
 import sys
 import os
 import pathos
-from itertools import chain
 import Valkyries.Alignment_Launcher as Alignment_Launcher
 import Valkyries.Version_Dependencies as VersionDependencies
 import Volur.Permutation_Analysis as Permutation_Analysis
 import Volur.Segment_Analyzer as Segment_Analyzer
-import Volur.Ginkgo as Ginkgo
-import Valkyries.FASTQ_Tools as FASTQ_Tools
 import Valkyries.BAM_Tools as BAM_Tools
 import Valkyries.Tool_Box as Tool_Box
 
@@ -52,61 +49,15 @@ def main(command_line_args=None):
     module_name = ""
 
     single_cell = False
-    fastq_qc = False
 
-    if single_cell and fastq_qc:
-        log.warning("This function is not available at this time.")
-        return
-
-        index_list = Tool_Box.FileParser.indices(log, args.Index_File)
-        file_info = FASTQ_Tools.FastqSplitter(args)
-
-        # Memory is a precious thing.
-        # file_info.fastq1.fastq.close()
-        # file_info.fastq2.fastq.close()
-
-        # Run the quality analysis.
-        FASTQ_Tools.FastqQuality(args, index_list, file_info)
-
-        # Do the alignment.
-        Alignment_Launcher.AlignmentLauncher(args, file_info)
-
-        # Process the BAM files.
-
-        BAM_Tools.merge_bam(args, index_list, log)
-        bamfile_list = BAM_Tools.demultiplex(index_list)
-
-        # Get Coverage Breadth and Depth for Each Cell.
-        bam_object.cell_coverage()
-
-        # Generate BED Files.
-        bedfile_list = bam_object.bam_to_bed()
-
-        # Get the BED files compressed.
-        p = pathos.multiprocessing.Pool(int(args.spawn))
-        p.starmap(Tool_Box.compress_files, zip(bedfile_list))
-
-        # These are our files that need to be deleted.
-        file_delete_list = list(chain.from_iterable(file_info.fastq_file_list))
-        Tool_Box.delete(file_delete_list)
-
-    elif eval(args.Bin_Generator):
-        if eval(args.Bin_Mapper):
-            Ginkgo.bin_mapper(args)
-        else:
-            Ginkgo.VariableBinGenerator(args)
-
-        log.info("Ginkgo bin generator completed successfully.  Happy analysis.")
-
-        return
-
-    elif eval(args.Permutation_Analysis):
+    if eval(args.Permutation_Analysis):
         log.info("{0} v{1}; Module: Permutation_Analysis v{2} Beginning"
                  .format(__package__, __version__, Permutation_Analysis.__version__))
         options_parser.add_argument("--Target_Intersect_File", dest="Target_Intersect_File", default="False")
         options_parser.add_argument("--Breakpoint_Coordinate_File", dest="Breakpoint_Coordinate_File", default="False")
         args = options_parser.parse_args()
         pa = Permutation_Analysis.PermutationAnalysis(log, args)
+        module_name = "Permutation_Analysis"
 
         if args.Permutation_Type == "Segment":
             pa.permute_data()
@@ -114,17 +65,12 @@ def main(command_line_args=None):
             pa.cell_permutation()
         elif args.Permutation_Type == "Shuffle":
             pa.shuffle_analysis()
-        elif not args.Permutation_Type == "Segment" \
-                or args.Permutation_Type == "Sample" \
-                or args.Permutation_Type == "Shuffle":
-
+        else:
             log.error("No Permutation Analysis Type Selected")
-
-        module_name = "Permutation_Analysis"
+            return
 
     elif single_cell:
         index_list = Tool_Box.FileParser.indices(log, args.Index_File)
-        # file_info = FASTQ_Tools.FastqSplitter(args)
         paired_end = False
         fastq2 = getattr(args, "FASTQ2", None)
         if fastq2 is not None:
@@ -140,17 +86,12 @@ def main(command_line_args=None):
         sorted_bamfile_name = BAM_Tools.sort(bam_file, int(args.Spawn), args.Compression_Level)
         BAM_Tools.index(sorted_bamfile_name)
         bamtool = BAM_Tools.BamTools(args, log, index_list)
-        demultiplexed_bam_list = bamtool.demultiplex()
-        # demultiplexed_bam_list = BAM_Tools.BamTools.demultiplex(args, log, index_list)
-        bedfile_list = bamtool.bam_to_bed(demultiplexed_bam_list)
+        bamtool.demultiplex()
+        bedfile_list = bamtool.bam_to_bed()
 
         # Get the BED files compressed.
         p = pathos.multiprocessing.Pool(int(args.spawn))
         p.starmap(Tool_Box.compress_files, zip(bedfile_list))
-
-        # These are our files that need to be deleted.
-        # file_delete_list = list(chain.from_iterable(file_info.fastq_file_list))
-        # Tool_Box.delete(file_delete_list)
 
         module_name = "Single_Cell"
 

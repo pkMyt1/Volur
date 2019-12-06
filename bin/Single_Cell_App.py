@@ -6,7 +6,7 @@ Single_Cell_App.py v0.1.0
     This is a functional beta version.  Will work as expected.  Still needs cleaner GUI possibly with larger fonts.
     The Target Search panel output still needs validation.
 
-Code for a GUI to run Mimir Single Cell Modules.
+
 @author: Dennis A. Simpson
          University of North Carolina at Chapel Hill
          Chapel Hill, NC  27599
@@ -28,7 +28,7 @@ import subprocess
 __author__ = 'Dennis A. Simpson'
 __version__ = '0.1.0'
 __package__ = 'Volur'
-__copyright__ = '(C) 2019'
+__copyright__ = '(C) 2018'
 
 
 class IntBoxes:
@@ -343,55 +343,6 @@ class CommonControls:
         return input_ctrl
 
 
-class BinGeneratorPanel(sized_controls.SizedScrolledPanel):
-    def __init__(self, parent):
-        super(BinGeneratorPanel, self).__init__(parent, wx.ID_ANY, name="BinGeneratorPanel")
-        panel_sizer = wx.BoxSizer(wx.VERTICAL)
-        title_sizer = wx.BoxSizer(wx.HORIZONTAL)
-        panel_grid_sizer = wx.GridBagSizer(0, 0)
-        my_controls = CommonControls(self)
-
-        title_bmp = wx.ArtProvider.GetBitmap(wx.ART_INFORMATION, wx.ART_OTHER, (32, 32))
-        title_icon = wx.StaticBitmap(self, wx.ID_ANY, title_bmp)
-        title = wx.StaticText(self, wx.ID_ANY, "Bin Generator Parameters")
-
-        title.SetForegroundColour("blue")
-        title.SetSize(title.GetBestSize())
-        title_sizer.Add(title_icon, 0, wx.ALL)
-        title_sizer.Add(title, 0, wx.EXPAND)
-
-        panel_sizer.Add(title_sizer, 0, wx.ALIGN_CENTER_HORIZONTAL)
-        panel_sizer.Add(wx.StaticLine(self, ), 0, wx.ALL | wx.EXPAND)
-
-        # Build a list of our control objects that create the widgets.  The order on the form is the same as this order
-        widget_build_list =\
-            [my_controls.folder_selector("--Working_Folder", tip="Full Path to Working Folder, no Trailing Slash"),
-             my_controls.file_selector("--Master_Index_File"),
-             my_controls.file_selector("--Index_File"),
-             my_controls.restricted_selector("--Verbose", "INFO"),
-             my_controls.text_control("--Job_Name"),
-             my_controls.int_control("--Spawn"),
-             my_controls.restricted_selector("--Species"),
-             my_controls.text_control("--Control_Sample")
-             ]
-
-        # Put the widgets on the form
-        self.control_dict = collections.defaultdict(tuple)
-        for i in range(len(widget_build_list)):
-            widget0 = widget_build_list[i][0]
-            widget1 = widget_build_list[i][1]
-            panel_grid_sizer.Add(width=20, height=0, pos=(i, 0))
-            panel_grid_sizer.Add(widget0, pos=(i, 1), flag=wx.ALL | wx.ALIGN_RIGHT | wx.ALIGN_CENTER_VERTICAL, border=3)
-            panel_grid_sizer.Add(widget1, pos=(i, 2),  flag=wx.EXPAND | wx.ALL, border=3)
-            panel_grid_sizer.Add(width=10, height=0, pos=(i, 3))
-            self.control_dict[i] = (widget0, widget1)
-
-        # panel_grid_sizer.AddGrowableCol(1)
-        panel_grid_sizer.AddGrowableCol(2)
-        panel_sizer.Add(panel_grid_sizer, 0, wx.ALL | wx.EXPAND)
-        self.SetSizerAndFit(panel_sizer)
-
-
 class SingleCellPanel(sized_controls.SizedScrolledPanel):
     def __init__(self, parent):
         super(SingleCellPanel, self).__init__(parent, wx.ID_ANY, name="SingleCellPanel")
@@ -702,13 +653,11 @@ class MainFrame(wx.Frame):
         self.welcome_panel = WelcomePanel(self)
         self.segment_analyzer_panel = SegmentAnalyzerPanel(self)
         self.single_cell_panel = SingleCellPanel(self)
-        self.bin_generator_panel = BinGeneratorPanel(self)
         self.segment_permutation_panel = SegmentPermutationPanel(self)
         self.sample_permutation_panel = SamplePermutationPanel(self)
 
         self.segment_analyzer_panel.Hide()
         self.single_cell_panel.Hide()
-        self.bin_generator_panel.Hide()
         self.segment_permutation_panel.Hide()
         self.sample_permutation_panel.Hide()
 
@@ -716,7 +665,6 @@ class MainFrame(wx.Frame):
             {"SegmentAnalyzerPanel": self.segment_analyzer_panel,
              "WelcomePanel": self.welcome_panel,
              "SingleCellPanel": self.single_cell_panel,
-             "BinGeneratorPanel": self.bin_generator_panel,
              "SegmentPermutationPanel": self.segment_permutation_panel,
              "SamplePermutationPanel": self.sample_permutation_panel
              }
@@ -750,7 +698,7 @@ class MainFrame(wx.Frame):
     @staticmethod
     def dataframe_build():
         dir_path = os.path.dirname(os.path.abspath(__file__))
-        pickle_file = "{0}{1}pickles{1}Mimir_parameters.pkl".format(dir_path, os.sep)
+        pickle_file = "{0}{1}pickles{1}Volur_parameters.pkl".format(dir_path, os.sep)
         try:
             with open(pickle_file, 'rb') as file:
                 dataframe_dict = dill.load(file)
@@ -785,7 +733,6 @@ class MainFrame(wx.Frame):
         # Build the "Tools" Menu
         tools_menu = wx.Menu()
         permutation_submenu = wx.Menu()
-        bin_generator_app = tools_menu.Append(wx.ID_ANY, "BinGenerator", "Generate Custom Bins for Ginkgo")
         sample_permutation_app = permutation_submenu.Append(wx.ID_ANY, "SamplePermutation",
                                                             "Do random sample permutations")
         segment_permutation_app = permutation_submenu.Append(wx.ID_ANY, "SegmentPermutation",
@@ -810,10 +757,6 @@ class MainFrame(wx.Frame):
         # Panel switching
         self.Bind(wx.EVT_MENU, lambda event, temp=segment_analyzer_app:
                   self.switch_panels(event, self.segment_analyzer_panel.GetName()), segment_analyzer_app)
-        self.Bind(wx.EVT_MENU, lambda event, temp=single_cell_app:
-                  self.switch_panels(event, self.bin_generator_panel.GetName()), single_cell_app)
-        self.Bind(wx.EVT_MENU, lambda event, temp=bin_generator_app:
-                  self.switch_panels(event, self.single_cell_panel.GetName()), bin_generator_app)
         self.Bind(wx.EVT_MENU, lambda event, temp=welcome_app:
                   self.switch_panels(event, self.welcome_panel.GetName()), welcome_app)
         self.Bind(wx.EVT_MENU, lambda event, temp=sample_permutation_app:
@@ -854,7 +797,7 @@ class MainFrame(wx.Frame):
 
     def save_parameter_file(self, event):
         def outstring_build():
-            file_body = "{}{}{}\n".format(bin_generator, do_permutations, segment_analyzer, single_cell)
+            file_body = "{}{}{}\n".format(do_permutations, segment_analyzer, single_cell)
             working_folder = ""
             job = ""
 
@@ -889,7 +832,6 @@ class MainFrame(wx.Frame):
             return job, working_folder, file_body, True
         segment_analyzer = "--Segment_Analyzer\tFalse\n"
         single_cell = "--Single_Cell\tFalse\n"
-        bin_generator = "--Bin_Generator\tFalse\n"
         do_permutations = "--Permutation_Analysis\tFalse\n"
         panel_parameters = ""
 
@@ -902,11 +844,6 @@ class MainFrame(wx.Frame):
             submodule = "Single_Cell"
             panel = self.single_cell_panel
             single_cell = "--Single_Cell\tTrue\n"
-
-        elif self.bin_generator_panel.IsShown():
-            submodule = "Bin_Generator"
-            panel = self.bin_generator_panel
-            bin_generator = "--Bin_Generator\tTrue\n"
 
         elif self.sample_permutation_panel.IsShown():
             submodule = "Sample Permutation_Analysis"
@@ -939,7 +876,7 @@ class MainFrame(wx.Frame):
         cmd = "python3 {0}{1}Volur.py --options_file {2}\nexit\n\n".format(dir_path, os.sep, outfile_name)
 
         # Save the current choices in the pickles folder.
-        pickle_file = "{0}{1}pickles{1}Mimir_parameters.pkl".format(dir_path, os.sep)
+        pickle_file = "{0}{1}pickles{1}Volur_parameters.pkl".format(dir_path, os.sep)
         with open(pickle_file, 'wb') as file:
             dill.dump(self.dataframe, file, protocol=-1)
 

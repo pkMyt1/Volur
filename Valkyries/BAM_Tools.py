@@ -13,7 +13,6 @@ BAM_Tools v0.6.0
 """
 
 import ntpath
-from collections import defaultdict, OrderedDict
 from copy import deepcopy
 import subprocess
 import pathlib
@@ -22,8 +21,7 @@ import pathos
 import pybedtools
 import pysam
 from natsort import natsort
-import Valkyries.Utilities as Utilities
-import Valkyries.Tool_Box as Tool_Box
+from Valkyries import Tool_Box, Sequence_Magic
 
 __author__ = "Dennis A. Simpson"
 __version__ = "0.6.1"
@@ -74,192 +72,6 @@ class AlignWriter:
 
     def close(self, log=None):
         self._bam_file.close()
-
-
-class LoggingWriter:
-
-    class UnplacedFamily:
-        def __init__(self):
-            self.filter_value = 'unplaced'
-            self.umi_sequence = -1
-
-    UNPLACED_FAMILY = UnplacedFamily()
-
-    def __init__(self, base_writer, log, chromosome):
-        self._base_writer = base_writer
-        self._log = log
-        self._align_filter_stats = defaultdict(int)
-        self._family_filter_stats = defaultdict(set)
-        self.chromosome = chromosome
-
-    def write(self, family, paired_align, alignment):
-        if not family:
-            family = LoggingWriter.UNPLACED_FAMILY
-
-        self._align_filter_stats[(family.filter_value, alignment.filter_value)] += 1
-        self._family_filter_stats[family.filter_value].add(family.umi_sequence)
-
-        if family == LoggingWriter.UNPLACED_FAMILY:
-            self._base_writer.write(None, paired_align, alignment)
-        else:
-            self._base_writer.write(family, paired_align, alignment)
-
-    @staticmethod
-    def _log_line(text, count, total, filter_name):
-        line = '{:.2f}% ({}/{}) {}: {}'
-        return line.format(100 * count / total, count, total, text, filter_name)
-
-    @property
-    def _unplaced_aligns(self):
-        unplaced_aligns = {}
-        for (fam_filter, align_filter), cnt in self._align_filter_stats.items():
-            if fam_filter == LoggingWriter.UNPLACED_FAMILY.filter_value and align_filter:
-                unplaced_aligns[align_filter] = cnt
-
-        return OrderedDict(Tool_Box.sort_dict(unplaced_aligns))
-
-    @staticmethod
-    def _discarded_filter_value(fam_filter, align_filter):
-        if fam_filter == LoggingWriter.UNPLACED_FAMILY.filter_value:
-            return None
-        else:
-            filter_values = []
-            if fam_filter:
-                filter_values.append(fam_filter)
-            if align_filter:
-                filter_values.append(align_filter)
-            return "; ".join(filter_values)
-
-    @property
-    def _discarded_aligns(self):
-        discarded_aligns = {}
-        for (fam_filter, align_filter), cnt in self._align_filter_stats.items():
-            filter_value = LoggingWriter._discarded_filter_value(fam_filter,
-                                                                 align_filter)
-            if filter_value:
-                discarded_aligns[filter_value] = cnt
-
-        return OrderedDict(Tool_Box.sort_dict(discarded_aligns))
-
-    @property
-    def _family_stats(self):
-        family_filter_stats = dict(self._family_filter_stats)
-        family_filter_stats.pop(LoggingWriter.UNPLACED_FAMILY.filter_value, None)
-        included_count = len(family_filter_stats.pop(None, []))
-        discarded_count = 0
-        filter_counts = OrderedDict()
-
-        for name, fam_ids in family_filter_stats.items():
-            align_count = len(fam_ids)
-            discarded_count += align_count
-            filter_counts[name] = align_count
-
-        total_count = included_count + discarded_count
-
-        return included_count, total_count, OrderedDict(Tool_Box.sort_dict(filter_counts))
-
-    @property
-    def _align_stats(self):
-        included_filter = (None, None)
-        included_count = self._align_filter_stats[included_filter]
-        excluded_count = sum([count for fam_align_filter,
-                              count in self._align_filter_stats.items() if fam_align_filter != included_filter])
-        total_count = included_count + excluded_count
-        return included_count, excluded_count, total_count
-
-    @staticmethod
-    def _percent_stat_str(count, total):
-        return '{:.2f}% ({}/{})'.format(100 * count / total, count, total)
-
-    @staticmethod
-    def _log_filter_counts(filter_counts, log_method, msg_format, total, chromosome):
-        for name, count in filter_counts.items():
-            percent = LoggingWriter._percent_stat_str(count, total)
-            log_method(msg_format.format(chromosome=chromosome, filter_name=name, percent_stat=percent))
-
-    def _log_results(self):
-        (included_align_count, excluded_align_count, tot_align_count) = self._align_stats
-        (included_fam_count, total_fam_count, discarded_fam_filter_counts) = self._family_stats
-
-        self._log.info('{}: {} alignments unplaced or discarded',
-                       self.chromosome, LoggingWriter._percent_stat_str(excluded_align_count, tot_align_count))
-
-        LoggingWriter._log_filter_counts(self._unplaced_aligns, self._log.debug,
-                                         '{chromosome}: alignments unplaced: {percent_stat} {filter_name}',
-                                         tot_align_count, self.chromosome)
-
-        LoggingWriter._log_filter_counts(self._discarded_aligns, self._log.debug,
-                                         '{chromosome} alignments discarded: {percent_stat} {filter_name}',
-                                         tot_align_count, self.chromosome)
-
-        LoggingWriter._log_filter_counts(discarded_fam_filter_counts, self._log.info,
-                                         '{chromosome} families discarded: {percent_stat} {filter_name}',
-                                         total_fam_count, chromosome=self.chromosome)
-
-        percent_stat = LoggingWriter._percent_stat_str(included_align_count, tot_align_count)
-        self._log.info('{}: {} alignments included in {} families', self.chromosome, percent_stat, included_fam_count)
-
-        if included_align_count == 0:
-            self._log.warning("{}: No alignments passed filters. (Was input BAM downsampled?)".format(self.chromosome))
-        else:
-            percent_dedup = 100 * (1 - (included_fam_count / included_align_count))
-            msg = '{} {:.2f}% deduplication rate (1 - {} families/{} included alignments)'
-
-            self._log.info(msg, self.chromosome, percent_dedup, included_fam_count, included_align_count)
-
-    def close(self, log=None):
-        if self._align_filter_stats:
-            self._log_results()
-        self._base_writer.close(log)
-
-
-class BamTag:
-
-    class _NullObject(object):
-        """Returns None for all method calls"""
-
-        def __init__(self):
-            self.included_pair_count = None
-            self.filter_value = None
-            self.umi_sequence = None
-            self.umt = lambda *args: None
-            self.is_consensus_template = lambda *args: None
-            self.positions = lambda *args: None
-            self.cigars = lambda *args: None
-
-    _NULL_OBJECT = _NullObject()
-
-    def __init__(self, tag_name, tag_type, description, get_value, analysis):
-        self._tag_name = tag_name
-        self._tag_type = tag_type
-        self._get_value = get_value
-        self._description = description
-
-        self.header_comment = "{}\tBAM tag\t{}: {}".format(analysis, tag_name, description)
-
-    def __lt__(self, other):
-        return (self._tag_name, self._description) < (other._tag_name, other._description)
-
-    def set_tag(self, family, paired_align, align_obj):
-        family = family if family else BamTag._NULL_OBJECT
-        paired_align = paired_align if paired_align else BamTag._NULL_OBJECT
-        value = self._get_value(family, paired_align, align_obj)
-        align_obj.set_tag(self._tag_name, value, self._tag_type)
-
-
-class BamFlag:
-    PAIRED = 1
-    PROPER_PAIR = 2
-    UNMAP = 4
-    MUNMAP = 8
-    REVERSE = 16
-    MREVERSE = 32
-    READ1 = 64
-    READ2 = 128
-    SECONDARY = 256
-    QCFAIL = 512
-    DUP = 1024
-    SUPPLEMENTARY = 2048
 
 
 class PairedAlignment:
@@ -359,154 +171,6 @@ class PairedAlignment:
                                     self.right.query_sequence)
 
 
-class MimirAlign:
-    # cgates: FYI, you can use dynamic delegation via __setattr__ and
-    # __getattr__ but it's awkward and about twice as slow
-    def __init__(self, pysam_align_segment, filter_value=None):
-        self.pysam_align_segment = pysam_align_segment
-        self.filter_value = filter_value
-
-    def __eq__(self, other):
-        return other.__dict__ == self.__dict__
-
-    # cgates: the native pysam hashing is not performant for ultradeep pileups
-    def __hash__(self):
-        return hash(self.filter_value) ^ \
-               hash(self.pysam_align_segment.query_name) ^ \
-               self.pysam_align_segment.reference_start
-
-    @property
-    def cigarstring(self):
-        return self.pysam_align_segment.cigarstring
-
-    @cigarstring.setter
-    def cigarstring(self, value):
-        self.pysam_align_segment.cigarstring = value
-
-    @property
-    def flag(self):
-        return self.pysam_align_segment.flag
-
-    @flag.setter
-    def flag(self, value):
-        self.pysam_align_segment.flag = value
-
-    def get_tag(self, name, with_value_type=False):
-        return self.pysam_align_segment.get_tag(name, with_value_type)
-
-    def get_tags(self, with_value_type=False):
-        return self.pysam_align_segment.get_tags(with_value_type)
-
-    @property
-    def mapping_quality(self):
-        return self.pysam_align_segment.mapping_quality
-
-    @mapping_quality.setter
-    def mapping_quality(self, value):
-        self.pysam_align_segment.mapping_quality = value
-
-    @property
-    def next_reference_start(self):
-        return self.pysam_align_segment.next_reference_start
-
-    @next_reference_start.setter
-    def next_reference_start(self, value):
-        self.pysam_align_segment.next_reference_start = value
-
-    @property
-    def orientation(self):
-        if self.reference_start < self.next_reference_start:
-            return 'left'
-        elif self.reference_start > self.next_reference_start:
-            return 'right'
-        else:
-            return 'neither'
-
-    @property
-    def query_name(self):
-        return self.pysam_align_segment.query_name
-
-    @query_name.setter
-    def query_name(self, value):
-        self.pysam_align_segment.query_name = value
-
-    @property
-    def query_sequence(self):
-        return self.pysam_align_segment.query_sequence
-
-    @query_sequence.setter
-    def query_sequence(self, value):
-        self.pysam_align_segment.query_sequence = value
-
-    @property
-    def query_qualities(self):
-        return self.pysam_align_segment.query_qualities
-
-    @query_qualities.setter
-    def query_qualities(self, value):
-        self.pysam_align_segment.query_qualities = value
-
-    @property
-    def reference_end(self):
-        return self.pysam_align_segment.reference_end
-
-    @property
-    def reference_id(self):
-        return self.pysam_align_segment.reference_id
-
-    @reference_id.setter
-    def reference_id(self, value):
-        self.pysam_align_segment.reference_id = value
-
-    @property
-    def reference_name(self):
-        return self.pysam_align_segment.reference_name
-
-    @property
-    def reference_start(self):
-        return self.pysam_align_segment.reference_start
-
-    @reference_start.setter
-    def reference_start(self, value):
-        self.pysam_align_segment.reference_start = value
-
-    def set_tag(self, tag_name, tag_value, value_type):
-        self.pysam_align_segment.set_tag(tag_name, tag_value, value_type)
-
-    @property
-    def template_length(self):
-        return self.pysam_align_segment.template_length
-
-    @template_length.setter
-    def template_length(self, value):
-        self.pysam_align_segment.template_length = value
-
-
-def filter_alignments(pysam_alignments, excluded_writer=AlignWriter.NULL):
-    filters = {'cigar unavailable':
-                    lambda a: a.cigarstring is None,
-               'mapping quality < 1':
-                    lambda a: a.mapping_quality < 1,
-               'not in proper pair':
-                    lambda a: a.flag & BamFlag.PROPER_PAIR == 0,
-               'qc failed':
-                    lambda a: a.flag & BamFlag.QCFAIL != 0,
-               'secondary alignment':
-                    lambda a: a.flag & BamFlag.SECONDARY != 0,
-               'supplementary alignment':
-                    lambda a: a.flag & BamFlag.SUPPLEMENTARY != 0,
-               }
-
-    generator = Utilities.FilteredGenerator(filters)
-    for pysam_align, filter_value in generator.filter(pysam_alignments):
-        alignment = MimirAlign(pysam_align, filter_value)
-
-        if filter_value:
-            excluded_writer.write(family=None, paired_align=None, alignment=alignment)
-        else:
-            yield alignment
-
-
 def alignment_file(filename, mode, template=None):
     return pysam.AlignmentFile(filename, mode, template)
 
@@ -582,44 +246,14 @@ def total_align_count(input_bam, chromosome=None):
     return count
 
 
-def build_bam_tags(analysis):
-
-    def combine_filters(fam, pair, align):
-        filters = [x.filter_value for x in [fam, align] if x and x.filter_value]
-
-        if filters:
-            return ";".join(filters).replace('; ', ';')
-        else:
-            return None
-
-    boolean_tag_value = {True: 1}
-    tags = [
-        BamTag("X0", "Z", "filter (why the alignment was excluded)", combine_filters, analysis),
-        BamTag("X1", "Z", "leftmost~rightmost matched pair positions",
-               lambda fam, pair, align: pair.positions('{left}~{right}'), analysis),
-        BamTag("X2", "Z", "L~R CIGARs",
-               lambda fam, pair, align: pair.cigars('{left}~{right}'), analysis),
-        BamTag("X3", "i", "unique identifier for this alignment family",
-               lambda fam, pair, align: fam.umi_sequence, analysis),
-        BamTag("X4", "Z", "L~R UMT barcodes for this alignment family; because of fuzzy matching the family UMT may "
-                          "be distinct from the UMT of the original alignment",
-               lambda fam, pair, align: fam.umt('{left}~{right}'), analysis),
-        BamTag("X5", "i", "family size (number of align pairs in this family)",
-               lambda fam, pair, align: fam.included_pair_count, analysis),
-        BamTag("X6", "i", "presence of this tag signals that this alignment would be the template for the consensus "
-                          "alignment",
-               lambda fam, pair, align: boolean_tag_value.get(fam.is_consensus_template(align), None), analysis)]
-    return tags
-
-
 class BamTools:
-    def __init__(self, args, log, index_list, file_info=None):
+    def __init__(self, args, log, index_list, bamfile_list=None, file_info=None):
         self.log = log
         self.index_list = index_list
         self.file_info = file_info
         self.args = args
         self.bamfile = None
-        self.bamfile_list = None
+        self.bamfile_list = bamfile_list
         self.coverage_dict = {"chrom": {"cell": "tuple"}}
 
     def build_dictionary(self, input_file):
@@ -718,6 +352,7 @@ class BamTools:
         subprocess.run([cmd], shell=True)
 
         self.log.info("Temporary BAM files merged.  Sort and index merged BAM file.")
+
         index(sort(self.bamfile, int(self.args.Spawn), self.args.Compression_Level))
         self.log.info("BAM file sorted and indexed.  Deleting Temporary BAM files..")
 
@@ -743,7 +378,7 @@ class BamTools:
             barcode_length = len(barcode)
             break
 
-        index_list.append(("Unidentified", "Unidentified"))
+        self.index_list.append(("Unidentified", "Unidentified"))
 
         # Initialize the output file.
         outfile = "{0}{1}_BAM_QualityAssessment.txt".format(self.args.Working_Folder, self.args.Job_Name)
@@ -773,7 +408,7 @@ class BamTools:
         multiplexed_bamfile = pysam.AlignmentFile(self.bamfile, 'rb')
 
         print("\t-->Create List of BAM file names and Dictionary of BAM files.")
-        for item in index_list:
+        for item in self.index_list:
             if item[0] == "Unidentified":
                 barcode = "Unidentified"
             else:
@@ -800,9 +435,7 @@ class BamTools:
             offset = 1
             read_barcode = read.qname.split("|")[1].split(":")[3]
 
-            print(read_barcode)
             for index_query in demultiplex_dict:
-
                 mismatch1 = Sequence_Magic.match_maker(index_query, read_barcode, self.args.Mismatch)
 
                 if mismatch1:
@@ -853,11 +486,10 @@ class BamTools:
         # Sort and index the demultiplexed BAM files.
         p = pathos.multiprocessing.Pool(int(self.args.Spawn))
         self.bamfile_list = \
-            (p.starmap(self.bam_sort, zip(tmp_bamfile_list,
-                                          itertools.repeat(int(self.args.Spawn)),
-                                          itertools.repeat(int(self.args.Compression_Level)))))
+            (p.starmap(sort, zip(tmp_bamfile_list, itertools.repeat(int(self.args.Spawn)),
+                                 itertools.repeat(int(self.args.Compression_Level)))))
 
-        return self.bamfile_list
+        return
 
     def bam_to_bed(self):
         """
